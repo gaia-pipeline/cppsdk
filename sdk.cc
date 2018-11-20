@@ -1,9 +1,7 @@
-#include <iostream>
-#include <memory>
 #include <string>
-
 #include <grpcpp/grpcpp.h>
 #include "plugin.grpc.pb.h"
+#include "sdk.h"
 
 using std::string;
 using grpc::Server;
@@ -27,13 +25,31 @@ static const string PROTOCOL_TYPE = "grpc";
 class GRPCPluginImpl final : public Plugin::Service {
     public:
         Status GetJobs(ServerContext* context, const Empty* request, ServerWriter<Job>* writer) {
-
+            // Iterate over all jobs and send every job to client (e.g. Gaia).
+            list<job_wrapper>::iterator it = cached_jobs.begin();
+            while (it != cached_jobs.end()) {
+                writer->Write((*it).job);
+            }
             return Status::OK;
         }
 
         Status ExecuteJob(ServerContext* context, const Job* request, JobResult* response) {
+            job_wrapper * job = GetJob((*request));
 
             return Status::OK;
+        }
+    private:
+        list<job_wrapper> cached_jobs;
+        
+        // GetJob finds the right job in the cache and returns it.
+        job_wrapper * GetJob(const Job job) {
+            list<job_wrapper>::iterator it = cached_jobs.begin();
+            while (it != cached_jobs.end()) {
+                if ((*it).job.unique_id() == job.unique_id()) {
+                    return &(*it);
+                }
+            }
+            return nullptr;
         }
 };
 

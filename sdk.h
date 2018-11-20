@@ -1,8 +1,13 @@
+#ifndef SDK_H
+#define SDK_H
+
 #include <string>
 #include <list>
+#include "plugin.grpc.pb.h"
 
 using std::string;
 using std::list;
+using proto::Job;
 
 enum input_type {
     textfield,
@@ -25,10 +30,17 @@ struct manual_interaction {
 };
 
 struct job {
-    void (*handler)(list<argument>);
+    string (*handler)(list<argument>) throw(string);
     string title;
     string description;
     list<string> depends_on;
     list<argument> args;
     manual_interaction * interaction;
 };
+
+struct job_wrapper {
+    string (*handler)(list<argument>) throw(string);
+    Job job;
+};
+
+#endif 
