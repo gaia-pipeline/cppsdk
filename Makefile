@@ -45,11 +45,11 @@ all: system-check run
 	$(PROTOC) -I $(PROTOS_PATH) --cpp_out=. $<
 
 clean:
-	rm -f *.o *.pb.cc *.pb.h 
+	rm -f *.out *.pb.cc *.pb.h 
 
 run:
-	 $(CXX) sdk.cc plugin.grpc.pb.cc plugin.pb.cc $(LDFLAGS) $(CXXFLAGS) -o sdk.o
-	./sdk.o
+	 $(CXX) sdk.cc plugin.grpc.pb.cc plugin.pb.cc $(LDFLAGS) $(CXXFLAGS) -o sdk.out
+	./sdk.out
 
 
 # The following is to test your system and ensure a smoother experience.
