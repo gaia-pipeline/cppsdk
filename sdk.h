@@ -2,6 +2,7 @@
 #define SDK_H
 
 #include <string>
+#include <map>
 #include <list>
 #include "plugin.grpc.pb.h"
 
@@ -9,28 +10,41 @@ using std::string;
 using std::list;
 using proto::Job;
 
-enum input_type {
-    textfield,
-    textarea,
-    boolean,
-    vault
+struct InputType {
+    enum class input_type {
+        textfield,
+        textarea,
+        boolean,
+        vault
+    };
 };
+
+const string ToString (InputType::input_type es) {
+    const std::map<InputType::input_type,const string> EnumStrings {
+        { InputType::input_type::textfield, "textfield" },
+        { InputType::input_type::textarea, "textarea" },
+        { InputType::input_type::boolean, "boolean" },
+        { InputType::input_type::vault, "vault" }
+    };
+    auto it = EnumStrings.find(es);
+    return it == EnumStrings.end() ? "Out of range" : it->second;
+}
 
 struct argument {
     string description;
-    input_type type;
+    InputType::input_type type;
     string key;
     string value;
 };
 
 struct manual_interaction {
     string description;
-    input_type type;
+    InputType::input_type type;
     string value;
 };
 
 struct job {
-    string (*handler)(list<argument>) throw(string);
+    void (*handler)(list<argument>) throw(string);
     string title;
     string description;
     list<string> depends_on;
@@ -39,7 +53,7 @@ struct job {
 };
 
 struct job_wrapper {
-    string (*handler)(list<argument>) throw(string);
+    void (*handler)(list<argument>) throw(string);
     Job job;
 };
 

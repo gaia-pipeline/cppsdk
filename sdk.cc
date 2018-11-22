@@ -16,6 +16,7 @@ using proto::Empty;
 using proto::Job;
 using proto::JobResult;
 using proto::Argument;
+using proto::ManualInteraction;
 
 // General constants
 static const string SERVER_CERT_ENV = "GAIA_PLUGIN_CERT";
@@ -58,7 +59,27 @@ class GRPCPluginImpl final : public Plugin::Service {
                 args.push_back(arg);
             }
 
+            // Execute job function.
+            try {
+                (*job).handler(args);
+            } catch (string e) {
+                // Check if job wants to force exit pipeline.
+                // We will exit the pipeline but not mark as 'failed'.
+                if (e.compare(ERR_EXIT_PIPELINE) != 0) {
+                   response->set_failed(true);
+                }
+
+                // Set log message and job id.
+                response->set_exit_pipeline(true);
+                response->set_message(e);
+                response->set_unique_id((*job).job.unique_id());
+            }
+
             return Status::OK;
+        }
+
+        void PushCachedJobs(job_wrapper* job) {
+            cached_jobs.push_back(*job);
         }
 
     private:
@@ -77,7 +98,19 @@ class GRPCPluginImpl final : public Plugin::Service {
         }
 };
 
-void Serve() {
+void Serve(list<job> jobs) {
+    // Transform all given jobs to proto objects.
+    list<job>::iterator it = jobs.begin();
+    while (it != jobs.end()) {
+        // Transform manual interaction.
+        ManualInteraction* ma = new ManualInteraction();
+        if ((*it).interaction != nullptr) {
+            ma->set_description((*(*it).interaction).description);
+            ma->set_type(ToString((*(*it).interaction).type));
+            ma->set_value((*(*it).interaction).value);
+        }
+    }
+
     GRPCPluginImpl service;
     ServerBuilder builder;
     int * selectedPort = new int(0);
@@ -88,6 +121,17 @@ void Serve() {
     server->Wait();
 };
 
+void example_job(list<argument> args) throw(string) {
+    std::cout << "This is the output of an example job" << std::endl;
+}
+
 int main(int argc, char** argv) {
-    Serve();
+    list<job> jobs;
+    job j;
+    j.description = "Example job";
+    j.title = "example job";
+    j.handler = &example_job;
+    jobs.push_back(j);
+
+    Serve(jobs);
 };
