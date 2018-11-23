@@ -36,10 +36,8 @@ class GRPCPluginImpl final : public Plugin::Service {
     public:
         Status GetJobs(ServerContext* context, const Empty* request, ServerWriter<Job>* writer) {
             // Iterate over all jobs and send every job to client (e.g. Gaia).
-            list<job_wrapper>::iterator it = cached_jobs.begin();
-            while (it != cached_jobs.end()) {
-                writer->Write((*it).job);
-                it++;
+            for (auto const& job : cached_jobs) {
+                writer->Write(job.job);
             }
             return Status::OK;
         }
@@ -87,12 +85,10 @@ class GRPCPluginImpl final : public Plugin::Service {
         
         // GetJob finds the right job in the cache and returns it.
         job_wrapper * GetJob(const Job job) {
-            list<job_wrapper>::iterator it = cached_jobs.begin();
-            while (it != cached_jobs.end()) {
-                if ((*it).job.unique_id() == job.unique_id()) {
-                    return &(*it);
+            for (auto & cached_job : cached_jobs) {
+                if (cached_job.job.unique_id() == job.unique_id()) {
+                    return &cached_job;
                 }
-                it++;
             }
             return nullptr;
         }
@@ -100,15 +96,28 @@ class GRPCPluginImpl final : public Plugin::Service {
 
 void Serve(list<job> jobs) {
     // Transform all given jobs to proto objects.
-    list<job>::iterator it = jobs.begin();
-    while (it != jobs.end()) {
+    for (auto const& job : jobs) {
+        Job* proto_job = new Job();
+        
         // Transform manual interaction.
         ManualInteraction* ma = new ManualInteraction();
-        if ((*it).interaction != nullptr) {
-            ma->set_description((*(*it).interaction).description);
-            ma->set_type(ToString((*(*it).interaction).type));
-            ma->set_value((*(*it).interaction).value);
+        if (job.interaction != nullptr) {
+            ma->set_description((*job.interaction).description);
+            ma->set_type(ToString((*job.interaction).type));
+            ma->set_value((*job.interaction).value);
         }
+
+        // Transform arguments.
+        for (auto const& a : job.args) {
+            Argument* arg = proto_job->add_args();
+            arg->set_description(a.description);
+            arg->set_type(ToString(a.type));
+            arg->set_key(a.key);
+            arg->set_value(a.value);
+        }
+
+        // Set other data to proto object.
+        proto_job->set_unique_id(job.un)
     }
 
     GRPCPluginImpl service;
@@ -120,6 +129,19 @@ void Serve(list<job> jobs) {
     delete selectedPort;
     server->Wait();
 };
+
+static const uint32_t hash_32_fnv1a(const void* key, const uint32_t len) {
+    const char* data = (char*)key;
+    uint32_t hash = 0x811c9dc5;
+    uint32_t prime = 0x1000193;
+
+    for(int i = 0; i < len; ++i) {
+        uint8_t value = data[i];
+        hash = hash ^ value;
+        hash *= prime;
+    }
+    return hash;
+}
 
 void example_job(list<argument> args) throw(string) {
     std::cout << "This is the output of an example job" << std::endl;
