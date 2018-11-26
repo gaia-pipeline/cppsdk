@@ -1,7 +1,12 @@
 #include <string>
 #include <memory>
 #include <algorithm>
+#include <cstdlib>
+#include <fstream>
+#include <fstream>
+#include <sstream>
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/health_check_service_interface.h>
 #include "plugin.grpc.pb.h"
 #include "sdk.h"
 
@@ -27,6 +32,7 @@ static const string LISTEN_ADDRESS = "localhost";
 static const int CORE_PROTOCOL_VERSION = 1;
 static const int PROTOCOL_VERSION = 2;
 static const string PROTOCOL_TYPE = "grpc";
+static const string PROTOCOL_NETWORK = "tcp";
 
 // FNV hash constants
 static const unsigned int FNV_PRIME = 16777619u;
@@ -85,6 +91,18 @@ class GRPCPluginImpl final : public Plugin::Service {
             cached_jobs.push_back(*job);
         }
 
+        static bool compare(job_wrapper a, job_wrapper b) {
+            return (a.job.unique_id() == b.job.unique_id());
+        }
+
+        void ApplyUnique() throw(string) {
+            int before_unique = cached_jobs.size();
+            cached_jobs.unique(compare);
+            if (before_unique > cached_jobs.size()) {
+                throw ERR_DUPLICATE_JOB;
+            }
+        }
+
     private:
         list<job_wrapper> cached_jobs;
         
@@ -109,7 +127,19 @@ static unsigned int fnvHash(const char* str) {
     return hash;
 };
 
-void Serve(list<job> jobs) throw(string) {
+static bool read_file(const string& filename, string& data) {
+    std::ifstream file(filename.c_str(), std::ios::in);
+	if (file.is_open()) {
+		std::stringstream ss;
+		ss << file.rdbuf ();
+		file.close ();
+		data = ss.str ();
+        return true;
+	}
+	return false;
+}
+
+static void Serve(list<job> jobs) throw(string) {
     // Allocate space for objects.
     GRPCPluginImpl service;
     ServerBuilder builder;
@@ -172,25 +202,58 @@ void Serve(list<job> jobs) throw(string) {
         service.PushCachedJobs(&w);
     }
 
+    // ApplyUnique checks if given jobs includes a duplicate.
+    // If so it will throw an error.
+    service.ApplyUnique();
+
+    // Get certificates path from env variables.
+    const string cert_path = std::getenv(SERVER_CERT_ENV.c_str());
+    const string key_path = std::getenv(SERVER_KEY_ENV.c_str());
+    const string ca_cert_path = std::getenv(ROOT_CA_CERT_ENV.c_str());
+
+    // Load all certificates into memory.
+    string cert_raw;
+    string key_raw;
+    string ca_cert_raw;
+    if (!read_file(cert_path, cert_raw)) {
+        throw "certificate is not a file or does not exist: " + cert_path; 
+    } else if (!read_file(key_path, key_raw)) {
+        throw "key is not a file or does not exist: " + key_path;
+    } else if (!read_file(ca_cert_path, ca_cert_raw)) {
+        throw "root certificate is not a file or does not exist: " + ca_cert_path;
+    }
+
+    // Load and setup mTLS.
+    grpc::SslServerCredentialsOptions::PemKeyCertPair keycert = {
+        key_raw,
+        cert_raw,
+    };
+    grpc::SslServerCredentialsOptions ssl_ops;
+    ssl_ops.pem_root_certs = ca_cert_raw;
+    ssl_ops.pem_key_cert_pairs.push_back(keycert);
+
+    // Allocate memory for the automatic selected port.
     int * selectedPort = new int(0);
-    builder.AddListeningPort(LISTEN_ADDRESS + string(":0"), grpc::InsecureServerCredentials(), selectedPort);
+
+    // Enable health check service and start grpc server.
+    grpc::EnableDefaultHealthCheckService(true);
+    builder.AddListeningPort(LISTEN_ADDRESS + string(":0"), grpc::SslServerCredentials(ssl_ops), selectedPort);
     unique_ptr<Server> server(builder.BuildAndStart());
-    std::cout << "Server listening on " << LISTEN_ADDRESS << ":" << *selectedPort << std::endl;
+         
+    // Define health service.
+    grpc::HealthCheckServiceInterface* health_svc = server->GetHealthCheckService();
+    health_svc->SetServingStatus("plugin", true);
+
+    // Output the address and service name to stdout.
+    // hashicorp go-plugin will use that to establish connection.
+    std::cout << CORE_PROTOCOL_VERSION <<
+        "|" << PROTOCOL_VERSION <<
+        "|" << PROTOCOL_NETWORK <<
+        "|" << LISTEN_ADDRESS + ":" << *selectedPort <<
+        "|" << PROTOCOL_TYPE << std::endl << std::flush;
+
+    // clean up a bit and wait until server receives exit signal.
     delete selectedPort;
     server->Wait();
 };
 
-void example_job(list<argument> args) throw(string) {
-    std::cout << "This is the output of an example job" << std::endl;
-}
-
-int main(int argc, char** argv) {
-    list<job> jobs;
-    job j;
-    j.description = "Example job";
-    j.title = "example job";
-    j.handler = &example_job;
-    jobs.push_back(j);
-
-    Serve(jobs);
-};
