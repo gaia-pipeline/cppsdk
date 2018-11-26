@@ -1,5 +1,6 @@
 #include <string>
 #include <memory>
+#include <algorithm>
 #include <grpcpp/grpcpp.h>
 #include "plugin.grpc.pb.h"
 #include "sdk.h"
@@ -26,6 +27,10 @@ static const string LISTEN_ADDRESS = "localhost";
 static const int CORE_PROTOCOL_VERSION = 1;
 static const int PROTOCOL_VERSION = 2;
 static const string PROTOCOL_TYPE = "grpc";
+
+// FNV hash constants
+static const unsigned int FNV_PRIME = 16777619u;
+static const unsigned int OFFSET_BASIS = 2166136261u;
 
 // Error messages
 static const string ERR_JOB_NOT_FOUND = "job not found in plugin";
@@ -94,13 +99,27 @@ class GRPCPluginImpl final : public Plugin::Service {
         }
 };
 
-void Serve(list<job> jobs) {
+static unsigned int fnvHash(const char* str) {
+    const size_t length = strlen(str) + 1;
+    unsigned int hash = OFFSET_BASIS;
+    for (size_t i = 0; i < length; ++i) {
+        hash ^= *str++;
+        hash *= FNV_PRIME;
+    }
+    return hash;
+};
+
+void Serve(list<job> jobs) throw(string) {
+    // Allocate space for objects.
+    GRPCPluginImpl service;
+    ServerBuilder builder;
+
     // Transform all given jobs to proto objects.
     for (auto const& job : jobs) {
         Job* proto_job = new Job();
         
         // Transform manual interaction.
-        ManualInteraction* ma = new ManualInteraction();
+        ManualInteraction* ma = proto_job->mutable_interaction();
         if (job.interaction != nullptr) {
             ma->set_description((*job.interaction).description);
             ma->set_type(ToString((*job.interaction).type));
@@ -117,11 +136,42 @@ void Serve(list<job> jobs) {
         }
 
         // Set other data to proto object.
-        proto_job->set_unique_id(job.un)
+        proto_job->set_unique_id(fnvHash(job.title.c_str()));
+        proto_job->set_title(job.title);
+        proto_job->set_description(job.description);
+
+        // Resolve dependencies.
+        for (auto const& dependency : job.depends_on) {
+            bool dependency_found;
+            for (auto const& current_job : jobs) {
+                // Transform titles to lower case for higher matching.
+                string current_job_title = current_job.title;
+                string depends_on_title = dependency;
+                std::transform(current_job_title.begin(), current_job_title.end(), current_job_title.begin(), ::tolower);
+                std::transform(depends_on_title.begin(), depends_on_title.end(), depends_on_title.begin(), ::tolower);
+                
+                // Check if this is the specified dependency.
+                if (current_job_title.compare(depends_on_title) == 0) {
+                    dependency_found = true;
+                    proto_job->add_dependson(fnvHash(current_job.title.c_str()));
+                    break;
+                }
+            }
+
+            // Check if dependency has been found.
+            if (!dependency_found) {
+                throw "job '" + job.title + "' has dependency '" + dependency + "' which is not declared";
+            }
+        }
+
+        // Create the jobs wrapper object.
+        job_wrapper w = {
+            job.handler,
+            (*proto_job),
+        };
+        service.PushCachedJobs(&w);
     }
 
-    GRPCPluginImpl service;
-    ServerBuilder builder;
     int * selectedPort = new int(0);
     builder.AddListeningPort(LISTEN_ADDRESS + string(":0"), grpc::InsecureServerCredentials(), selectedPort);
     unique_ptr<Server> server(builder.BuildAndStart());
@@ -129,19 +179,6 @@ void Serve(list<job> jobs) {
     delete selectedPort;
     server->Wait();
 };
-
-static const uint32_t hash_32_fnv1a(const void* key, const uint32_t len) {
-    const char* data = (char*)key;
-    uint32_t hash = 0x811c9dc5;
-    uint32_t prime = 0x1000193;
-
-    for(int i = 0; i < len; ++i) {
-        uint8_t value = data[i];
-        hash = hash ^ value;
-        hash *= prime;
-    }
-    return hash;
-}
 
 void example_job(list<argument> args) throw(string) {
     std::cout << "This is the output of an example job" << std::endl;
