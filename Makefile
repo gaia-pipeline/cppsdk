@@ -36,7 +36,7 @@ PROTOS_PATH = ./
 
 vpath %.proto $(PROTOS_PATH)
 
-all: system-check run
+all: system-check compile
 
 %.grpc.pb.cc: %.proto
 	$(PROTOC) -I $(PROTOS_PATH) --grpc_out=. --plugin=protoc-gen-grpc=$(GRPC_CPP_PLUGIN_PATH) $<
@@ -47,10 +47,8 @@ all: system-check run
 clean:
 	rm -f *.out *.pb.cc *.pb.h 
 
-run:
-	 $(CXX) sdk.cc plugin.grpc.pb.cc plugin.pb.cc $(LDFLAGS) $(CXXFLAGS) -o sdk.out
-	./sdk.out
-
+compile:
+	$(CXX) -c sdk.cc plugin.grpc.pb.cc plugin.pb.cc $(LDFLAGS) $(CXXFLAGS) 
 
 # The following is to test your system and ensure a smoother experience.
 # They are by no means necessary to actually compile a grpc-enabled software.

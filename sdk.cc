@@ -1,8 +1,8 @@
 #include <string>
+#include <iostream>
 #include <memory>
 #include <algorithm>
 #include <cstdlib>
-#include <fstream>
 #include <fstream>
 #include <sstream>
 #include <grpcpp/grpcpp.h>
@@ -54,15 +54,15 @@ class GRPCPluginImpl final : public Plugin::Service {
         }
 
         Status ExecuteJob(ServerContext* context, const Job* request, JobResult* response) {
-            job_wrapper * job = GetJob((*request));
+            gaia::job_wrapper * job = GetJob((*request));
             if (job == nullptr) {
                 return Status(grpc::StatusCode::CANCELLED, ERR_JOB_NOT_FOUND);
             }
 
             // Transform arguments.
-            list<argument> args;
+            list<gaia::argument> args;
             for (int i = 0; i < (*request).args_size(); ++i) {
-                argument arg = {};
+                gaia::argument arg = {};
                 arg.key = (*request).args(i).key();
                 arg.value = (*request).args(i).value();
                 args.push_back(arg);
@@ -87,11 +87,11 @@ class GRPCPluginImpl final : public Plugin::Service {
             return Status::OK;
         }
 
-        void PushCachedJobs(job_wrapper* job) {
+        void PushCachedJobs(gaia::job_wrapper* job) {
             cached_jobs.push_back(*job);
         }
 
-        static bool compare(job_wrapper a, job_wrapper b) {
+        static bool compare(gaia::job_wrapper a, gaia::job_wrapper b) {
             return (a.job.unique_id() == b.job.unique_id());
         }
 
@@ -104,10 +104,10 @@ class GRPCPluginImpl final : public Plugin::Service {
         }
 
     private:
-        list<job_wrapper> cached_jobs;
+        list<gaia::job_wrapper> cached_jobs;
         
         // GetJob finds the right job in the cache and returns it.
-        job_wrapper * GetJob(const Job job) {
+        gaia::job_wrapper * GetJob(const Job job) {
             for (auto & cached_job : cached_jobs) {
                 if (cached_job.job.unique_id() == job.unique_id()) {
                     return &cached_job;
@@ -139,7 +139,7 @@ static bool read_file(const string& filename, string& data) {
 	return false;
 }
 
-static void Serve(list<job> jobs) throw(string) {
+void Serve(list<gaia::job> jobs) throw(string) {
     // Allocate space for objects.
     GRPCPluginImpl service;
     ServerBuilder builder;
@@ -195,7 +195,7 @@ static void Serve(list<job> jobs) throw(string) {
         }
 
         // Create the jobs wrapper object.
-        job_wrapper w = {
+        gaia::job_wrapper w = {
             job.handler,
             (*proto_job),
         };
