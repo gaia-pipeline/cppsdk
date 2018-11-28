@@ -139,121 +139,135 @@ static bool read_file(const string& filename, string& data) {
 	return false;
 }
 
-void Serve(list<gaia::job> jobs) throw(string) {
-    // Allocate space for objects.
-    GRPCPluginImpl service;
-    ServerBuilder builder;
+namespace gaia {
 
-    // Transform all given jobs to proto objects.
-    for (auto const& job : jobs) {
-        Job* proto_job = new Job();
-        
-        // Transform manual interaction.
-        ManualInteraction* ma = proto_job->mutable_interaction();
-        if (job.interaction != nullptr) {
-            ma->set_description((*job.interaction).description);
-            ma->set_type(ToString((*job.interaction).type));
-            ma->set_value((*job.interaction).value);
-        }
+    void Serve(list<gaia::job> jobs) throw(string) {
+        // Allocate space for objects.
+        GRPCPluginImpl service;
+        ServerBuilder builder;
 
-        // Transform arguments.
-        for (auto const& a : job.args) {
-            Argument* arg = proto_job->add_args();
-            arg->set_description(a.description);
-            arg->set_type(ToString(a.type));
-            arg->set_key(a.key);
-            arg->set_value(a.value);
-        }
+        // Transform all given jobs to proto objects.
+        for (auto const& job : jobs) {
+            Job* proto_job = new Job();
+            
+            // Transform manual interaction.
+            ManualInteraction* ma = proto_job->mutable_interaction();
+            if (job.interaction != nullptr) {
+                ma->set_description((*job.interaction).description);
+                ma->set_type(ToString((*job.interaction).type));
+                ma->set_value((*job.interaction).value);
+            }
 
-        // Set other data to proto object.
-        proto_job->set_unique_id(fnvHash(job.title.c_str()));
-        proto_job->set_title(job.title);
-        proto_job->set_description(job.description);
+            // Transform arguments.
+            for (auto const& a : job.args) {
+                Argument* arg = proto_job->add_args();
+                arg->set_description(a.description);
+                arg->set_type(ToString(a.type));
+                arg->set_key(a.key);
+                arg->set_value(a.value);
+            }
 
-        // Resolve dependencies.
-        for (auto const& dependency : job.depends_on) {
-            bool dependency_found;
-            for (auto const& current_job : jobs) {
-                // Transform titles to lower case for higher matching.
-                string current_job_title = current_job.title;
-                string depends_on_title = dependency;
-                std::transform(current_job_title.begin(), current_job_title.end(), current_job_title.begin(), ::tolower);
-                std::transform(depends_on_title.begin(), depends_on_title.end(), depends_on_title.begin(), ::tolower);
-                
-                // Check if this is the specified dependency.
-                if (current_job_title.compare(depends_on_title) == 0) {
-                    dependency_found = true;
-                    proto_job->add_dependson(fnvHash(current_job.title.c_str()));
-                    break;
+            // Set other data to proto object.
+            proto_job->set_unique_id(fnvHash(job.title.c_str()));
+            proto_job->set_title(job.title);
+            proto_job->set_description(job.description);
+
+            // Resolve dependencies.
+            for (auto const& dependency : job.depends_on) {
+                bool dependency_found;
+                for (auto const& current_job : jobs) {
+                    // Transform titles to lower case for higher matching.
+                    string current_job_title = current_job.title;
+                    string depends_on_title = dependency;
+                    std::transform(current_job_title.begin(), current_job_title.end(), current_job_title.begin(), ::tolower);
+                    std::transform(depends_on_title.begin(), depends_on_title.end(), depends_on_title.begin(), ::tolower);
+                    
+                    // Check if this is the specified dependency.
+                    if (current_job_title.compare(depends_on_title) == 0) {
+                        dependency_found = true;
+                        proto_job->add_dependson(fnvHash(current_job.title.c_str()));
+                        break;
+                    }
+                }
+
+                // Check if dependency has been found.
+                if (!dependency_found) {
+                    throw "job '" + job.title + "' has dependency '" + dependency + "' which is not declared";
                 }
             }
 
-            // Check if dependency has been found.
-            if (!dependency_found) {
-                throw "job '" + job.title + "' has dependency '" + dependency + "' which is not declared";
-            }
+            // Create the jobs wrapper object.
+            gaia::job_wrapper w = {
+                job.handler,
+                (*proto_job),
+            };
+            service.PushCachedJobs(&w);
         }
 
-        // Create the jobs wrapper object.
-        gaia::job_wrapper w = {
-            job.handler,
-            (*proto_job),
+        // ApplyUnique checks if given jobs includes a duplicate.
+        // If so it will throw an error.
+        service.ApplyUnique();
+
+        // Get certificates path from env variables.
+        char* cert_path_p = std::getenv(SERVER_CERT_ENV.c_str());
+        char* key_path_p = std::getenv(SERVER_KEY_ENV.c_str());
+        char* ca_cert_path_p = std::getenv(ROOT_CA_CERT_ENV.c_str());
+
+        // if the env variable was not found it returns a pullptr.
+        if (cert_path_p == nullptr) {
+            throw "certificate env variable was not set: " + SERVER_CERT_ENV;
+        } else if (key_path_p == nullptr) {
+            throw "key env variable was not set: " + SERVER_KEY_ENV;
+        } else if (ca_cert_path_p == nullptr) {
+            throw "root certificate env variable was not set: " + ROOT_CA_CERT_ENV; 
+        }
+        string cert_path(cert_path_p);
+        string key_path(key_path_p);
+        string ca_cert_path(ca_cert_path_p);
+
+        // Load all certificates into memory.
+        string cert_raw;
+        string key_raw;
+        string ca_cert_raw;
+        if (!read_file(cert_path, cert_raw)) {
+            throw "certificate is not a file or does not exist: " + cert_path; 
+        } else if (!read_file(key_path, key_raw)) {
+            throw "key is not a file or does not exist: " + key_path;
+        } else if (!read_file(ca_cert_path, ca_cert_raw)) {
+            throw "root certificate is not a file or does not exist: " + ca_cert_path;
+        }
+
+        // Load and setup mTLS.
+        grpc::SslServerCredentialsOptions::PemKeyCertPair keycert = {
+            key_raw,
+            cert_raw,
         };
-        service.PushCachedJobs(&w);
-    }
+        grpc::SslServerCredentialsOptions ssl_ops;
+        ssl_ops.pem_root_certs = ca_cert_raw;
+        ssl_ops.pem_key_cert_pairs.push_back(keycert);
 
-    // ApplyUnique checks if given jobs includes a duplicate.
-    // If so it will throw an error.
-    service.ApplyUnique();
+        // Allocate memory for the automatic selected port.
+        int * selectedPort = new int(0);
 
-    // Get certificates path from env variables.
-    const string cert_path = std::getenv(SERVER_CERT_ENV.c_str());
-    const string key_path = std::getenv(SERVER_KEY_ENV.c_str());
-    const string ca_cert_path = std::getenv(ROOT_CA_CERT_ENV.c_str());
+        // Enable health check service and start grpc server.
+        grpc::EnableDefaultHealthCheckService(true);
+        builder.AddListeningPort(LISTEN_ADDRESS + string(":0"), grpc::SslServerCredentials(ssl_ops), selectedPort);
+        unique_ptr<Server> server(builder.BuildAndStart());
+             
+        // Define health service.
+        grpc::HealthCheckServiceInterface* health_svc = server->GetHealthCheckService();
+        health_svc->SetServingStatus("plugin", true);
 
-    // Load all certificates into memory.
-    string cert_raw;
-    string key_raw;
-    string ca_cert_raw;
-    if (!read_file(cert_path, cert_raw)) {
-        throw "certificate is not a file or does not exist: " + cert_path; 
-    } else if (!read_file(key_path, key_raw)) {
-        throw "key is not a file or does not exist: " + key_path;
-    } else if (!read_file(ca_cert_path, ca_cert_raw)) {
-        throw "root certificate is not a file or does not exist: " + ca_cert_path;
-    }
+        // Output the address and service name to stdout.
+        // hashicorp go-plugin will use that to establish connection.
+        std::cout << CORE_PROTOCOL_VERSION <<
+            "|" << PROTOCOL_VERSION <<
+            "|" << PROTOCOL_NETWORK <<
+            "|" << LISTEN_ADDRESS + ":" << *selectedPort <<
+            "|" << PROTOCOL_TYPE << std::endl << std::flush;
 
-    // Load and setup mTLS.
-    grpc::SslServerCredentialsOptions::PemKeyCertPair keycert = {
-        key_raw,
-        cert_raw,
+        // clean up a bit and wait until server receives exit signal.
+        delete selectedPort;
+        server->Wait();
     };
-    grpc::SslServerCredentialsOptions ssl_ops;
-    ssl_ops.pem_root_certs = ca_cert_raw;
-    ssl_ops.pem_key_cert_pairs.push_back(keycert);
-
-    // Allocate memory for the automatic selected port.
-    int * selectedPort = new int(0);
-
-    // Enable health check service and start grpc server.
-    grpc::EnableDefaultHealthCheckService(true);
-    builder.AddListeningPort(LISTEN_ADDRESS + string(":0"), grpc::SslServerCredentials(ssl_ops), selectedPort);
-    unique_ptr<Server> server(builder.BuildAndStart());
-         
-    // Define health service.
-    grpc::HealthCheckServiceInterface* health_svc = server->GetHealthCheckService();
-    health_svc->SetServingStatus("plugin", true);
-
-    // Output the address and service name to stdout.
-    // hashicorp go-plugin will use that to establish connection.
-    std::cout << CORE_PROTOCOL_VERSION <<
-        "|" << PROTOCOL_VERSION <<
-        "|" << PROTOCOL_NETWORK <<
-        "|" << LISTEN_ADDRESS + ":" << *selectedPort <<
-        "|" << PROTOCOL_TYPE << std::endl << std::flush;
-
-    // clean up a bit and wait until server receives exit signal.
-    delete selectedPort;
-    server->Wait();
-};
-
+}

@@ -20,7 +20,7 @@ namespace gaia {
         };
     };
 
-    const string ToString (InputType::input_type es) {
+    inline const string ToString (InputType::input_type es) {
         const std::map<InputType::input_type,const string> EnumStrings {
             { InputType::input_type::textfield, "textfield" },
             { InputType::input_type::textarea, "textarea" },
