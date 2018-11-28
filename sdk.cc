@@ -252,6 +252,7 @@ namespace gaia {
         // Enable health check service and start grpc server.
         grpc::EnableDefaultHealthCheckService(true);
         builder.AddListeningPort(LISTEN_ADDRESS + string(":0"), grpc::SslServerCredentials(ssl_ops), selectedPort);
+        builder.RegisterService(&service);
         unique_ptr<Server> server(builder.BuildAndStart());
              
         // Define health service.
