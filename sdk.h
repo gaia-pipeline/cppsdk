@@ -50,7 +50,7 @@ namespace gaia {
         string description;
         list<string> depends_on;
         list<argument> args;
-        manual_interaction * interaction;
+        manual_interaction interaction;
     };
 
     struct job_wrapper {

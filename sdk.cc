@@ -148,19 +148,18 @@ namespace gaia {
 
         // Transform all given jobs to proto objects.
         for (auto const& job : jobs) {
-            Job* proto_job = new Job();
+            Job proto_job;
             
             // Transform manual interaction.
-            ManualInteraction* ma = proto_job->mutable_interaction();
-            if (job.interaction != nullptr) {
-                ma->set_description((*job.interaction).description);
-                ma->set_type(ToString((*job.interaction).type));
-                ma->set_value((*job.interaction).value);
-            }
+            ManualInteraction* ma = new ManualInteraction();
+            ma->set_description(job.interaction.description);
+            ma->set_type(ToString(job.interaction.type));
+            ma->set_value(job.interaction.value);
+            proto_job.set_allocated_interaction(ma);
 
             // Transform arguments.
             for (auto const& a : job.args) {
-                Argument* arg = proto_job->add_args();
+                Argument* arg = proto_job.add_args();
                 arg->set_description(a.description);
                 arg->set_type(ToString(a.type));
                 arg->set_key(a.key);
@@ -168,9 +167,9 @@ namespace gaia {
             }
 
             // Set other data to proto object.
-            proto_job->set_unique_id(fnvHash(job.title.c_str()));
-            proto_job->set_title(job.title);
-            proto_job->set_description(job.description);
+            proto_job.set_unique_id(fnvHash(job.title.c_str()));
+            proto_job.set_title(job.title);
+            proto_job.set_description(job.description);
 
             // Resolve dependencies.
             for (auto const& dependency : job.depends_on) {
@@ -185,7 +184,7 @@ namespace gaia {
                     // Check if this is the specified dependency.
                     if (current_job_title.compare(depends_on_title) == 0) {
                         dependency_found = true;
-                        proto_job->add_dependson(fnvHash(current_job.title.c_str()));
+                        proto_job.add_dependson(fnvHash(current_job.title.c_str()));
                         break;
                     }
                 }
@@ -199,7 +198,7 @@ namespace gaia {
             // Create the jobs wrapper object.
             gaia::job_wrapper w = {
                 job.handler,
-                (*proto_job),
+                proto_job,
             };
             service.PushCachedJobs(&w);
         }
