@@ -248,16 +248,15 @@ namespace gaia {
         // Allocate memory for the automatic selected port.
         int * selectedPort = new int(0);
 
-        // Define health service and add it to gRPC server.
-        grpc::HealthCheckServiceInterface* health_svc = server->GetHealthCheckService();
-        health_svc->SetServingStatus("plugin", true);
-
         // Enable health check service and start grpc server.
         grpc::EnableDefaultHealthCheckService(true);
         builder.AddListeningPort(LISTEN_ADDRESS + string(":0"), grpc::SslServerCredentials(ssl_ops), selectedPort);
         builder.RegisterService(&service);
-        builder.RegisterService(&health_svc);
         unique_ptr<Server> server(builder.BuildAndStart());
+             
+        // Define health service.
+        grpc::HealthCheckServiceInterface* health_svc = server->GetHealthCheckService();
+        health_svc->SetServingStatus("plugin", true);
 
         // Output the address and service name to stdout.
         // hashicorp go-plugin will use that to establish connection.
